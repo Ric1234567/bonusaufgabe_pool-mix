@@ -4,23 +4,17 @@
 import random
 import string
 
-# create attack log
-attack_log = open("attack.log", "w")
-
-
-# f.write("Now the file has more content!")
-# f.close()
 
 class PoolMix:
-    def __init__(self, name, batch_size, pool_size, follow_mix):
+    def __init__(self, name, batch_size, pool_size):
         self.name = name
         self.batch = []
         self.pool = []
         self.batch_size = batch_size
         self.pool_size = pool_size
-        self.follow_mix = follow_mix
 
     def process(self):
+        # check if mix is full
         if self.pool_size + self.batch_size <= len(self.batch) + len(self.pool):
             all_messages = self.batch + self.pool
 
@@ -39,139 +33,138 @@ class PoolMix:
             self.pool += all_messages
 
             if rnd_messages is not None:
-                # mix sends messages
-                if self.follow_mix is not None:
-                    # mix is not the last one in cascade
-                    print(self.name + " sends " + str(len(rnd_messages)) + " Messages: " + str(
-                        rnd_messages) + " to " + str(self.follow_mix.name))
-                    self.follow_mix.add_messages(rnd_messages)
-                else:
-                    print(self.name + " sends " + str(len(rnd_messages)) + " Messages: " + str(
-                        rnd_messages) + " to receivers")
+                # send all messages to address
+                for m in rnd_messages:
+                    if type(m.receiver) is PoolMix:
+                        m.receiver.add_message(m)
+                        print(self.name + " sends " + str(m) + " to " + str(m.receiver.name))
+                    else:
+                        print(self.name + " sends " + str(m) + " to " + str(m.receiver))
 
-            return rnd_messages
+    @staticmethod
+    def decrypt_message_content(message):
+        return message.content
 
     def add_message(self, message):
         if message is not None:
-            if len(self.pool) < self.pool_size:
-                self.pool.append(message)
-            elif len(self.batch) < self.batch_size:
-                self.batch.append(message)
-            else:
-                # mix full; clear batch before adding message
-                self.process()
-                self.batch.append(message)
+            dec_message = self.decrypt_message_content(message)
 
-    def add_messages(self, messages):
-        for mess in messages:
-            self.add_message(mess)
+            if len(self.pool) < self.pool_size:
+                self.pool.append(dec_message)
+            elif len(self.batch) < self.batch_size:
+                self.batch.append(dec_message)
+
+            self.process()
 
     def __str__(self):
-        return "Mix content:\nBatch: " + str(self.batch) + "\nPool: " + str(self.pool)
+        return self.name + ":{\nBatch(" + str(len(self.batch)) + "): " + str(self.batch) + "\nPool(" + str(
+            len(self.pool)) + "): " + str(self.pool) + "}"
 
 
 class Message:
-    def __init__(self, timestamp, sender, receiver):
+    def __init__(self, timestamp, sender, receiver, content):
         self.timestamp = timestamp
         self.sender = sender
         self.receiver = receiver
+        self.content = content
 
     def __str__(self):
-        return '[Message: Sender:' + str(self.sender) + ' Receiver:' + str(self.receiver) + ']'
+        # sender name
+        if type(self.sender) is PoolMix:
+            print_snd = self.sender.name
+        else:
+            print_snd = self.sender
+
+        # receiver name
+        if type(self.receiver) is PoolMix:
+            print_rec = self.receiver.name
+        else:
+            print_rec = self.receiver
+
+        return '{ Msg: {Ts:' + str(self.timestamp) + '; Snd:' + str(print_snd) + '; Rec:' + str(
+            print_rec) + '; Cnt:{' + str(
+            self.content) + '}} }'
 
     def __repr__(self):
         return str(self)
 
 
-# Simulation a)---------------------------------------------------------------------------------------------------------
-print("Teilaufgabe a)")
-mix = PoolMix("PoolMix", 4, 2, None)
-for i in range(100):
-    # print round nr
-    print('Round', i)
+def read_in_generic_messages():
+    # read message of file
+    file = open('messages.txt', 'r')
+    message_list = []
+    lines = file.readlines()
+    for i in range(1, 1001):
+        line = lines[i].split()
+        message_list.append(Message(line[0], line[1], line[2], None))
 
-    # log
-    attack_log.write("Round " + str(i) + ":\n")
-
-    # random sender sends message to mix
-    rnd_sender = random.randint(0, 10)
-    rnd_receiver = random.randint(0, 5)
-    print("Sender", rnd_sender, "sends Message to mix.")
-    attack_log.write("[Input] Mix receives a message from Sender " + str(rnd_sender) + "!\n")
-
-    # add to mix
-    mix.add_message(Message(i, rnd_sender, rnd_receiver))
-
-    # print current mix batch and pool
-    print(mix)
-
-    # send messages
-    sent_messages = mix.process()
-    if sent_messages is not None:
-        # log attacker
-        # print("Mix sends " + str(len(sent_messages)) + " Messages: " + str(sent_messages))
-        for message in sent_messages:
-            attack_log.write("[Output] Mix sends a message to Receiver " + str(message.receiver) + "\n")
-
-        # print new content
-        print("New " + str(mix))
-
-    print()
-
-attack_log.close()
-
-# b)---------------------------------------------------------------------------------------------------------
-print("Teilaufgabe b)")
-
-# read message of file
-file = open('messages.txt', 'r')
-message_list = []
-lines = file.readlines()
-for i in range(1, 1000):
-    line = lines[i].split()
-    message_list.append(Message(line[0], line[1], line[2]))
+    return message_list
 
 
-def simulation(mixes):
-    # Simulation 1. Variant ------------------------------------------------------------------------------------
+def create_mix_message(message: Message, mixes):
+    tmp_message = Message(message.timestamp, mixes[-1], message.receiver, "some secret text")
+
+    # reverse loop
+    for i in range(len(mixes), 0, -1):
+        if i - 2 >= 0:
+            # mix is sender
+            tmp_message = Message(message.timestamp, mixes[i - 2], mixes[i - 1], tmp_message)
+        else:
+            # original sender
+            tmp_message = Message(message.timestamp, message.sender, mixes[i - 1], tmp_message)
+    return tmp_message
+
+
+def simulation(mixes, message_list):
     round_nr = 0
-    for message in message_list:
+    for generic_message in message_list:
         print("Round " + str(round_nr))
-        print("Sender " + message.sender + " sends message to receiver " + message.receiver)
+
+        # sender creates mix message: A1, Content(A2, Content(A3, Content(...)))
+        mix_message = create_mix_message(generic_message, mixes)
+        print("Sender " + mix_message.sender + " sends " + str(mix_message) + " to " + str(mix_message.receiver.name))
 
         # add new message to first mix
-        mixes[0].add_message(message)
+        mixes[0].add_message(mix_message)
 
         # mix sends to following mix in cascade
-        for i in range(len(mixes)):
-            mixes[i].process()
-            # if sent_messages is not None:
-            # if mixes[i] is not mixes[-1]:  # if not the last one
-            # print("Mix-" + str(i) + " sends " + str(sent_messages) + " to Mix-" + str(i + 1))
-            # mixes[i + 1].add_messages(sent_messages)
-            # else:
-            # print("Mix-" + str(i) + " sends " + str(sent_messages) + " to receivers")
-            # else:
-            #     break
+        # for i in range(len(mixes)):
+        #     mixes[i].process()
+
+        print()
+        print("Mix status:")
+        for mix in mixes:
+            print(str(mix))
 
         round_nr += 1
+        print("-------------------------------------------------------------------------------------------------------")
         print()
 
 
-print("1. Variante")
-mix3 = PoolMix("Mix-3", 3, 0, None)
-mix2 = PoolMix("Mix-2", 3, 0, mix3)
-mix1 = PoolMix("Mix-1", 3, 0, mix2)
-simulation([mix1, mix2, mix3])
+m_list = read_in_generic_messages()
 
-print("2. Variante")
-mix3 = PoolMix("Mix-3", 3, 2, None)
-mix2 = PoolMix("Mix-2", 3, 2, mix3)
-mix1 = PoolMix("Mix-1", 3, 2, mix2)
-simulation([mix1, mix2, mix3])
+# Simulation a)---------------------------------------------------------------------------------------------------------
+print("Teilaufgabe a)")
+simulation([PoolMix("Mix-1", 4, 2)], m_list)
 
-print("3. Variante")
-mix3 = PoolMix("Mix-3", 3, 6, None)
-mix2 = PoolMix("Mix-2", 3, 2, mix3)
-mix1 = PoolMix("Mix-1", 3, 0, mix2)
-simulation([mix1, mix2, mix3])
+# b)---------------------------------------------------------------------------------------------------------
+print()
+print("===============================================================================================")
+print("Teilaufgabe b)")
+print("1. Variante ===============================================================================================")
+mix3 = PoolMix("Mix-3", 3, 0)
+mix2 = PoolMix("Mix-2", 3, 0)
+mix1 = PoolMix("Mix-1", 3, 0)
+simulation([mix1, mix2, mix3], m_list)
+
+print("2. Variante ===============================================================================================")
+mix3 = PoolMix("Mix-3", 3, 2)
+mix2 = PoolMix("Mix-2", 3, 2)
+mix1 = PoolMix("Mix-1", 3, 2)
+simulation([mix1, mix2, mix3], m_list)
+
+print("3. Variante ===============================================================================================")
+mix3 = PoolMix("Mix-3", 3, 6)
+mix2 = PoolMix("Mix-2", 3, 2)
+mix1 = PoolMix("Mix-1", 3, 0)
+simulation([mix1, mix2, mix3], m_list)
